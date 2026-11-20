@@ -14,7 +14,7 @@ jobs:
     permissions:
       id-token: write
       contents: read
-    uses: .github/workflows/install-keda.yaml@main
+    uses: ./.github/workflows/install-keda.yaml@main
     with:
       environment: dev
       action: ${{ inputs.action }}
