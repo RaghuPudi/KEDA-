@@ -41,8 +41,14 @@ on:
         description: Role ARN for GHA
         type: string
         default: "arn:aws:iam::283354839233:role/github-actions-role"
-      aws_region: us-east-1
-      cluster_name: dev-cluster-1
+      aws_region:
+        description: region
+        type: string
+        default: "us-east-1"
+      cluster_name:
+        description:
+        type: string
+        default: "dev-cluster-1"
 
 jobs:
   keda:
