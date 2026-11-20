@@ -37,7 +37,10 @@ on:
         description: "Optional extra Helm values as YAML text (e.g. operator.replicaCount: 2)"
         type: string
         default: ""
-      role_arn: arn:aws:iam::283354839233:role/github-actions-role
+      role_arn: 
+        description: Role ARN for GHA
+        type: string
+        default: "arn:aws:iam::283354839233:role/github-actions-role"
       aws_region: us-east-1
       cluster_name: dev-cluster-1
 
