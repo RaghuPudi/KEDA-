@@ -1,0 +1,120 @@
+name: Install KEDA (reusable)
+
+# Installs / upgrades / removes KEDA on an existing EKS cluster using the official KEDA Helm chart.
+# Istio-safe: KEDA pods are kept out of the mesh (no sidecar).
+#
+# Caller:
+#   jobs:
+#     keda:
+#       permissions: { id-token: write, contents: read }
+#       uses: my-org/keda-eks-gha/.github/workflows/install-keda.yml@v1
+#       with: { environment: dev }
+#
+# AWS role / region / cluster come from the caller's GitHub Environment variables
+# AWS_ROLE_ARN, AWS_REGION, EKS_CLUSTER_NAME (or pass them as inputs).
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: Environment of Caller repo
+        required: true
+        type: string
+        default: 'dev'
+      action:
+        description: install | uninstall
+        type: string
+        default: install
+      keda_version:
+        description: KEDA Helm chart version
+        type: string
+        default: "2.17.2"
+      operator_role_arn:
+        description: Optional IRSA role for keda-operator (only for AWS scalers such as SQS/CloudWatch)
+        type: string
+        default: ""
+      extra_values:
+        description: "Optional extra Helm values as YAML text (e.g. operator.replicaCount: 2)"
+        type: string
+        default: ""
+      role_arn:
+        description: Overrides vars.AWS_ROLE_ARN
+        type: string
+        default: ""
+      aws_region:
+        description: Overrides vars.AWS_REGION
+        type: string
+        default: ""
+      cluster_name:
+        description: Overrides vars.EKS_CLUSTER_NAME
+        type: string
+        default: ""
+
+jobs:
+  keda:
+    name: ${{ inputs.action }} KEDA (${{ inputs.environment }})
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    concurrency:
+      group: keda-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      ACTION: ${{ inputs.action }}
+      KEDA_VERSION: ${{ inputs.keda_version }}
+      OPERATOR_ROLE_ARN: ${{ inputs.operator_role_arn }}
+      EXTRA_VALUES: ${{ inputs.extra_values }}
+      CLUSTER_NAME: ${{ inputs.cluster_name || vars.EKS_CLUSTER_NAME }}
+      AWS_REGION: ${{ inputs.aws_region || vars.AWS_REGION }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.role_arn || vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: azure/setup-helm@v4
+
+      - name: Connect to EKS
+        run: aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+
+      - name: Uninstall KEDA
+        if: inputs.action == 'uninstall'
+        run: helm uninstall keda --namespace keda --wait
+
+      - name: Install / upgrade KEDA
+        if: inputs.action == 'install'
+        run: |
+          # Keep KEDA out of the Istio mesh: the API server calls its metrics service and
+          # webhooks in plaintext, which a sidecar enforcing STRICT mTLS would block.
+          cat > values.yaml <<'EOF'
+          podAnnotations:
+            keda:
+              sidecar.istio.io/inject: "false"
+            metricsAdapter:
+              sidecar.istio.io/inject: "false"
+            webhooks:
+              sidecar.istio.io/inject: "false"
+          EOF
+          printf '%s\n' "$EXTRA_VALUES" > extra-values.yaml
+
+          ARGS=()
+          if [ -n "$OPERATOR_ROLE_ARN" ]; then
+            ARGS+=(--set podIdentity.aws.irsa.enabled=true --set "podIdentity.aws.irsa.roleArn=$OPERATOR_ROLE_ARN")
+          fi
+
+          helm repo add kedacore https://kedacore.github.io/charts
+          helm repo update
+          helm upgrade --install keda kedacore/keda \
+            --namespace keda --create-namespace \
+            --version "$KEDA_VERSION" \
+            -f values.yaml -f extra-values.yaml "${ARGS[@]}" \
+            --atomic --wait --timeout 10m
+
+      - name: Verify
+        if: inputs.action == 'install'
+        run: |
+          kubectl -n keda get pods
+          kubectl wait --for=condition=Available --timeout=120s apiservice/v1beta1.external.metrics.k8s.io
+          kubectl get crd scaledobjects.keda.sh

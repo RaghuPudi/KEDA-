@@ -1,0 +1,21 @@
+name: install-keda
+
+# Example for a microservice repo. Copy to .github/workflows/ and replace `my-org`.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        type: choice
+        options: [install, uninstall]
+        default: install
+
+jobs:
+  keda:
+    permissions:
+      id-token: write
+      contents: read
+    uses: my-org/keda-eks-gha/.github/workflows/install-keda.yml@v1
+    with:
+      environment: dev
+      action: ${{ inputs.action }}
+      # operator_role_arn: arn:aws:iam::111111111111:role/keda-operator-dev   # AWS scalers only
